@@ -1,0 +1,57 @@
+name: Release Lambda
+
+on:
+  workflow_call:
+    inputs:
+      lambda-name:
+        description: 'Lambda function name (used in release tag)'
+        required: true
+        type: string
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract Current Version
+        id: version
+        run: |
+          RAW_VERSION=$(jq -r .version package.json)
+          # Strip -SNAPSHOT suffix if present to get clean version
+          VERSION=$(echo "$RAW_VERSION" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Current version: $VERSION"
+
+      - name: Create Release
+        run: |
+          gh release create "${{ inputs.lambda-name }}-v${{ steps.version.outputs.version }}" \
+            --title "${{ inputs.lambda-name }} v${{ steps.version.outputs.version }}" \
+            --generate-release-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Bump to Next Snapshot Version
+        run: |
+          CURRENT="${{ steps.version.outputs.version }}"
+          MAJOR=$(echo "$CURRENT" | cut -d. -f1)
+          MINOR=$(echo "$CURRENT" | cut -d. -f2)
+          PATCH=$(echo "$CURRENT" | cut -d. -f3)
+          NEXT_VERSION="$MAJOR.$MINOR.$((PATCH + 1))-SNAPSHOT"
+
+          echo "Bumping version to: $NEXT_VERSION"
+          jq --arg v "$NEXT_VERSION" '.version = $v' package.json > tmp.json && mv tmp.json package.json
+
+      - name: Commit Version Bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json
+          git commit -m "chore: bump ${{ inputs.lambda-name }} to next snapshot version"
+          git push

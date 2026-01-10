@@ -1,0 +1,134 @@
+name: Deploy Lambda Snapshot
+
+on:
+  workflow_call:
+    inputs:
+      lambda-name:
+        description: 'Lambda function name (used for naming and tagging)'
+        required: true
+        type: string
+      aws-region:
+        description: 'AWS region to deploy to'
+        required: false
+        type: string
+        default: 'us-east-1'
+      terragrunt-runner-image:
+        description: 'Docker image for Terragrunt runner'
+        required: false
+        type: string
+        default: 'ghcr.io/cobyzim/terragrunt-runner:latest'
+    secrets:
+      AWS_ACCESS_KEY_ID:
+        required: true
+      AWS_SECRET_ACCESS_KEY:
+        required: true
+      TF_MODULES_SSH_KEY:
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    container:
+      image: ${{ inputs.terragrunt-runner-image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    defaults:
+      run:
+        shell: bash
+
+    env:
+      HOME: /root
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ inputs.aws-region }}
+
+      - name: Setup SSH for Private Modules
+        run: |
+          mkdir -p /root/.ssh
+          echo "${{ secrets.TF_MODULES_SSH_KEY }}" > /root/.ssh/id_rsa
+          chmod 600 /root/.ssh/id_rsa
+          ssh-keyscan github.com >> /root/.ssh/known_hosts
+
+      - name: Extract Version
+        id: version
+        run: |
+          VERSION=$(jq -r .version package.json)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Deploying version: $VERSION"
+
+      - name: Check Terraform and Terragrunt Versions
+        run: terraform --version && terragrunt --version
+
+      - name: Install Dependencies
+        run: apk add --no-cache zip rsync
+
+      - name: Prepare Lambda Layer Artifact
+        run: |
+          echo "Preparing Lambda Layer zip..."
+          FIXED_DATE="1980-01-01 00:00:00"
+          mkdir -p artifacts
+
+          LAYER_TMP=$(mktemp -d)
+          TMP_DIR="$LAYER_TMP/nodejs"
+          mkdir -p "$TMP_DIR"
+
+          rsync -a --delete "./nodejs/" "$TMP_DIR/"
+          find "$LAYER_TMP" -type f -exec touch -d "$FIXED_DATE" {} +
+
+          cd "$LAYER_TMP"
+          zip -X -r "$OLDPWD/artifacts/layer.zip" nodejs
+          cd -
+          rm -rf "$LAYER_TMP"
+
+          echo "Layer zip created:"
+          ls -lh artifacts/layer.zip
+
+      - name: Prepare Lambda Function Artifact
+        run: |
+          echo "Preparing Lambda Function zip..."
+          FIXED_DATE="1980-01-01 00:00:00"
+
+          FUNC_TMP=$(mktemp -d)
+          rsync -a --delete "./src/" "$FUNC_TMP/"
+          find "$FUNC_TMP" -type f -exec touch -d "$FIXED_DATE" {} +
+
+          cd "$FUNC_TMP"
+          zip -X -r "$OLDPWD/artifacts/function.zip" .
+          cd -
+          rm -rf "$FUNC_TMP"
+
+          echo "Function zip created:"
+          ls -lh artifacts/function.zip
+
+      - name: Deploy with Terragrunt
+        working-directory: infrastructure
+        env:
+          TF_USE_SNAPSHOT: 'true'
+          TF_IS_ROLLBACK: 'false'
+          TF_APPLICATION_VERSION: ${{ steps.version.outputs.version }}
+          TF_LAMBDA_NAME: ${{ inputs.lambda-name }}
+        run: |
+          echo "Copying artifacts to Terraform directories..."
+          cp ../artifacts/layer.zip lambda_layer/
+          cp ../artifacts/function.zip lambda_function/
+
+          echo "Applying Terraform with Terragrunt..."
+          terragrunt apply -all --non-interactive
+
+          echo "Cleaning up artifacts..."
+          rm -f lambda_layer/layer.zip lambda_function/function.zip
+
+          echo "${{ inputs.lambda-name }} snapshot deployed successfully!"

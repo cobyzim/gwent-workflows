@@ -77,10 +77,7 @@ jobs:
           echo "Creating nodejs directory with production deps..."                                                                                                                    
           mkdir -p nodejs                                                                                                                                                             
           cp package.json package-lock.json nodejs/                                                                                                                                   
-          cd nodejs && npm ci --omit=dev && cd ..                                                                                                      
-                                                                                                                                                                                  
-          echo "Layer dependencies installed:"                                                                                                                                        
-          ls -la node_modules | head -20
+          cd nodejs && npm ci --omit=dev && cd ..
 
       - name: Prepare Lambda Layer Artifact
         run: |

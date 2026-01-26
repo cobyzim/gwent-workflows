@@ -33,6 +33,7 @@ jobs:
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
+      options: --user root
 
     defaults:
       run:
@@ -67,7 +68,19 @@ jobs:
         run: terraform --version && terragrunt --version
 
       - name: Install Dependencies
-        run: apk add --no-cache zip rsync
+        run: |
+          apk add --no-cache zip rsync
+
+          echo "Installing Node.js..."                                                                                                                                                
+          apk add --no-cache nodejs npm                                                                                                                                               
+                                                                                                                                                                                  
+          echo "Creating nodejs directory with production deps..."                                                                                                                    
+          mkdir -p nodejs                                                                                                                                                             
+          cp package.json package-lock.json nodejs/                                                                                                                                   
+          cd nodejs && npm ci --omit=dev && cd ..                                                                                                      
+                                                                                                                                                                                  
+          echo "Layer dependencies installed:"                                                                                                                                        
+          ls -la node_modules | head -20
 
       - name: Prepare Lambda Layer Artifact
         run: |

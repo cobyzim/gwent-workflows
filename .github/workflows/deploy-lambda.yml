@@ -57,6 +57,11 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.TF_MODULES_SSH_KEY }}
 
+      - name: Add GitHub to known_hosts                                                                                                                                               
+        run: |                                                                                                                                                                        
+          mkdir -p /root/.ssh                                                                                                                                                         
+          ssh-keyscan github.com >> /root/.ssh/known_hosts 
+
       - name: Extract Version
         id: version
         run: |

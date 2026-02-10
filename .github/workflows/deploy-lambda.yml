@@ -16,7 +16,12 @@ on:
       role-to-assume:                                                                                                                                                                 
         description: 'ARN of the IAM role to assume via OIDC'                                                                                                                         
         required: true                                                                                                                                                                
-        type: string  
+        type: string
+      ref:                                                                                                                                                                          
+        description: 'Git ref to checkout (tag, branch, or SHA). Defaults to HEAD.'                                                                                                 
+        required: false                                                                                                                                                             
+        type: string                                                                                                                                                                
+        default: '' 
     secrets:
       TF_MODULES_SSH_KEY:
         required: true
@@ -45,6 +50,8 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:                                                                                                                                                                         
+          ref: ${{ inputs.ref || github.ref }} 
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -65,9 +72,15 @@ jobs:
       - name: Extract Version
         id: version
         run: |
-          VERSION=$(jq -r .version package.json)
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Deploying version: $VERSION"
+          RAW_VERSION=$(jq -r .version package.json)                                                                                                                                  
+          if [ "${{ inputs.is-snapshot }}" = "true" ]; then                                                                                                                           
+            VERSION="$RAW_VERSION"                                                                                                                                                    
+          else                                                                                                                                                                        
+            # Strip -SNAPSHOT suffix for releases                                                                                                                                     
+            VERSION=$(echo "$RAW_VERSION" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+')                                                                                                       
+          fi                                                                                                                                                                          
+          echo "version=$VERSION" >> $GITHUB_OUTPUT                                                                                                                                   
+          echo "Deploying version: $VERSION" 
 
       - name: Check Terraform and Terragrunt Versions
         run: terraform --version && terragrunt --version
